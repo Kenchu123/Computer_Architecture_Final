@@ -1,0 +1,4 @@
+RTL pass cycle: 
+SYN pass cycle: 
+Total cell area: 
+A*T(Area*SYN pass cycle): 
