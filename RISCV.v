@@ -13,10 +13,10 @@ module RISCV(clk,
             );
 
     // Input/Output Part
-    input             clk, rst_n;   // Clock signal
-    input      [31:0] mem_rdata_I;  // Active low asyncrhonous reset signal
-    output reg [29:0] mem_addr_I;   // Output address of instruction memory
+    input             clk, rst_n;   // Clock signal, Active low asyncrhonous reset signal
     input      [31:0] mem_rdata_I;  // Instruction read from instruction memory
+    output reg [29:0] mem_addr_I;   // Output address of instruction memory
+    output     [31:0] mem_addr_D;   // Output address of data memory
     output            mem_wen_D;    // Write-enable
     output     [63:0] mem_wdata_D;  // Data store to data memory
     input      [63:0] mem_rdata_D;  // Data read from data memory
@@ -60,26 +60,63 @@ module RISCV(clk,
     wire [22:0] type;    // JAL, JALR ... 23 bits
 	wire [4:0]  format;  // R, I, S, B, J. 5 bits
     wire [11:0] ctrl;    // control signal
-    wire [31:0] imm;     // immediate value
+    wire [63:0] imm;     // immediate value
+        
+        // ctrl signal
+    wire        Jal;
+    wire        Jalr;
+    wire        Branch;
+    wire        MemRead;
+    wire        MemWrite;
+    wire        MentoReg;
+    wire        RegWrite;
+    wire        ALUSrc;
+    wire [3:0]  ALUOp;
 
     wire [63:0] read_data1, read_data2;
-    wire        Reg_Write;
     wire [4:0]  read_reg1, read_reg2, write_reg;
     wire [63:0] write_data;
 
+    wire [63:0] reg_or_imm; // ALU data2
     wire [63:0] ALU_result;
+    wire        zero;
+    wire [3:0]  ALU_ctrl;
+
+    wire [63:0] shifted_imm;
 
     // Reg Part
-    reg [29:0] next_mem_addr_I;
+    reg  [29:0] next_mem_addr_I;
     // reg        next_mem_wen_D;
     // reg [63:0] next_mem_wdata_D;
     
     // Assign Part
-    assign Reg_Write = ctrl[2];
+
+        // assign ctrl signal
+    assign Jal      =   ctrl[11];
+    assign Jalr     =   ctrl[10];
+    assign Branch   =   ctrl[9];
+    assign MemRead  =   ctrl[8];
+    assign MemWrite =   ctrl[7];
+    assign MemtoReg =   ctrl[6];
+    assign RegWrite =   ctrl[5];
+    assign ALUSrc   =   ctrl[4];
+    assign ALUOp    =   ctrl[3:0];
+
+        // assign others
     assign read_reg1 = mem_addr_I[19:15];
     assign read_reg2 = mem_addr_I[24:20];
     assign write_reg = mem_addr_I[11:7];
-    assign write_data = (ctrl[3])? mem_rdata_D : ALU_result;
+    assign write_data = (MemtoReg)? mem_rdata_D : ALU_result;
+
+    assign reg_or_imm = (ALUSrc)? imm : read_data2;
+    assign ALU_ctrl = (Branch)? 4'b1000 : ((MemRead || MemWrite)? 4'b0000: ALUOp); // branch is SUB, ld/sd are ADD
+
+    assign shifted_imm = imm << 1;
+
+        // assign output
+    assign mem_wen_D = MemWrite;
+    assign mem_addr_D = ALU_result;
+    assign mem_wdata_D = read_data2;
 
     // Module Part
     Decoder decoder(
@@ -90,7 +127,7 @@ module RISCV(clk,
         imm
     );
     Register register(
-        Reg_Write,
+        RegWrite,
         read_reg1,
         read_reg2,
         write_reg,
@@ -98,26 +135,44 @@ module RISCV(clk,
         read_data1,
         read_data2
     );
+    ALU alu(
+        read_data1,
+        reg_or_imm,
+        ALU_ctrl,
+        ALU_result,
+        zero
+    );
 
-    // Combinational Part
+    // Combinational Part (PC controller)
     always@ (*) begin
-        
+        if (type == BEQ) begin
+            if (zero) begin
+                next_mem_addr_I = mem_addr_I + shifted_imm;
+            end
+            else begin
+                next_mem_addr_I = mem_addr_I + 4;
+            end
+        end
+        else if (type == BNE) begin
+            if (!zero) begin
+                next_mem_addr_I = mem_addr_I + shifted_imm;
+            end
+            else begin
+                next_mem_addr_I = mem_addr_I + 4;
+            end
+        end
+        else begin
+            next_mem_addr_I = mem_addr_I + 4;
+        end
     end
           
-             
-              
-    
     // Sequential Part
     always@ (posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            mem_addr_I  <= 30'b0;
-            // mem_wen_D   <= 1'b0;
-            // mem_wdata_D <= 64'b0;
+            mem_addr_I <= 30'b0;
         end
         else begin
             mem_addr_I <= next_mem_addr_I;
-            // mem_wen_D <= next_mem_wen_D;
-            // mem_wdata_D <= next_mem_wdata_D;
         end
 
     end
@@ -140,7 +195,7 @@ module Decoder( // for mem_I
 	output [22:0] instruction_type;
 	output [4:0]  instruction_format;
 	output [11:0] ctrl_signal;
-	output [31:0] immediate;
+	output [63:0] immediate;
 
     // Parameter Part
     parameter R = 5'b10000;
@@ -182,7 +237,7 @@ module Decoder( // for mem_I
     reg [22:0] type;
     reg [4:0]  format;
     reg [11:0] ctrl;
-    reg [31:0] imm;
+    reg [63:0] imm;
     
     // Assign Part
     assign instruction_type = type;
@@ -197,17 +252,17 @@ module Decoder( // for mem_I
                 type = JAL;
                 format = J;
                 ctrl = 12'b100001111111;
-                immediate = { {11{mem_rdata_I[31]}}, mem_rdata_I[19:12], mem_rdata_I[20], mem_rdata_I[30:21], 1'b0 };
+                immediate = { {43{mem_rdata_I[31]}}, mem_rdata_I[19:12], mem_rdata_I[20], mem_rdata_I[30:21], 1'b0 };
             end
             7'b1100111: begin
                 type = JALR;
                 format = I;
                 ctrl = 12'b010001111111;
-                immediate = { {20{mem_rdata_I[31]}}, mem_rdata_I[31:20] };
+                immediate = { {52{mem_rdata_I[31]}}, mem_rdata_I[31:20] };
             end
             7'b1100011: begin
                 format = B;
-                immediate = { {19{mem_rdata_I[31]}}, mem_rdata_I[31], mem_rdata_I[7], mem_rdata_I[30:25], mem_rdata_I[11:8], 1'b0 };
+                immediate = { {51{mem_rdata_I[31]}}, mem_rdata_I[31], mem_rdata_I[7], mem_rdata_I[30:25], mem_rdata_I[11:8], 1'b0 };
                 case (func3)
                     3'b000: begin
                         type = BEQ;
@@ -223,17 +278,17 @@ module Decoder( // for mem_I
                 type = LD;
                 format = I;
                 ctrl =  12'b000101111111;
-                immediate = { {20{mem_rdata_I[31]}}, mem_rdata_I[31:20] };
+                immediate = { {52{mem_rdata_I[31]}}, mem_rdata_I[31:20] };
             end
             7'b0100011: begin
                 type = SD;
                 format = S;
                 ctrl = 12'b000011011111;
-                immediate = { {20{mem_rdata_I[31]}}, mem_rdata_I[31:25], mem_rdata_I[11:7] };
+                immediate = { {52{mem_rdata_I[31]}}, mem_rdata_I[31:25], mem_rdata_I[11:7] };
             end
             7'b0010011: begin
                 format = I;
-                immediate = { {20{mem_rdata_I[31]}}, mem_rdata_I[31:20] };
+                immediate = { {52{mem_rdata_I[31]}}, mem_rdata_I[31:20] };
                 case (func3)
                     3'b000: begin 
                         type = ADDI;
@@ -275,7 +330,7 @@ module Decoder( // for mem_I
             end
             7'b0110011: begin
                 format = R;
-                immediate = 32'b0;
+                immediate = 64'b0;
                 case (func3)
                     3'b000: begin
                         case (func7)
@@ -348,7 +403,7 @@ module Register(
     parameter REGSIZE = 32;
 
     // Wire Part
-    // Reg part
+    // Reg Part
     reg [63:0] register [0:REGSIZE-1];
 
     // Assign Part
@@ -368,5 +423,52 @@ module Register(
     always @(negedge rst_n) begin
         for (i=0; i<REGSIZE; i=i+1)
             register[i] <= 64'b0;
+    end
+endmodule
+
+module ALU(
+            data1,
+            data2,
+            ctrl,  // ALU_ctrl
+            result, // ALU_result
+            zero
+            );
+
+    // Input/Output Part
+    input  [63:0] data1, data2;
+    input  [3:0]  ctrl;
+    output [63:0] result;
+    output zero; // boolean
+    
+    // Parameter Part
+    localparam ADD = 4'b0000;
+    localparam SUB = 4'b1000;
+    localparam SLL = 4'b0001;
+    localparam SLT = 4'b0010;
+    localparam XOR = 4'b0100;
+    localparam SRL = 4'b0101;
+    localparam SRA = 4'b1101;
+    localparam OR  = 4'b0110;
+    localparam AND = 4'b0111;
+
+    // Wire Part
+    // Reg Part
+    reg [63:0] res;
+    // Assign Part 
+    assign result = res;
+    assign zero = !result;
+    // Combinational Part
+    always@(*) begin
+        case(ctrl)
+            ADD: res = (data1 + data2);
+            SUB: res = (data1 - data2);
+            SLL: res = (data1 << data2);
+            SLT: res = (data1 < data2);
+            XOR: res = (data1 ^ data2);
+            SRL: res = (data1 >> data2);
+            SRA: res = (data1 >>> data2);
+            OR:  res = (data1 | data2);
+            AND: res = (data1 & data2);
+        endcase
     end
 endmodule
