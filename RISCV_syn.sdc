@@ -1,6 +1,6 @@
 #You may modified the clock constraints
 ####################################################
-set cycle  10
+set cycle  6
 ####################################################
 
 #The following are design spec. for synthesis
