@@ -62,7 +62,7 @@ module RISCV(clk,
     wire [11:0] ctrl;    // control signal
     wire [63:0] imm;     // immediate value
         
-        // ctrl signal
+    // ctrl signal
     wire        Jal;
     wire        Jalr;
     wire        Branch;
@@ -91,7 +91,7 @@ module RISCV(clk,
     
     // Assign Part
 
-        // assign ctrl signal
+    // assign ctrl signal
     assign Jal      =   ctrl[11];
     assign Jalr     =   ctrl[10];
     assign Branch   =   ctrl[9];
@@ -102,18 +102,19 @@ module RISCV(clk,
     assign ALUSrc   =   ctrl[4];
     assign ALUOp    =   ctrl[3:0];
 
-        // assign others
+    // assign others
     assign read_reg1 = {mem_rdata_I[11:8], mem_rdata_I[23]};   // Little Endian
     assign read_reg2 = {mem_rdata_I[0], mem_rdata_I[15:12]};   // Little Endian
     assign write_reg = {mem_rdata_I[19:16], mem_rdata_I[31]};  // Little Endian
     assign write_data = (Jal || Jalr)? {34'b0, (mem_addr_I + 1)} : ((MemtoReg)? mem_rdata_D_BE : ALU_result);
+    // assign write_data = (Jal || Jalr)? {32'b0, (mem_addr_I + 1), 2'b0} : ((MemtoReg)? mem_rdata_D_BE : ALU_result);
 
     assign reg_or_imm = (ALUSrc)? imm : read_data2;
     assign ALU_ctrl = (Branch)? 4'b1000 : ((MemRead || MemWrite)? 4'b0000 : ALUOp); // branch is SUB, ld/sd are ADD
 
     assign shifted_imm = imm << 1;
 
-        // assign output
+    // assign output
     assign mem_wen_D = MemWrite;
     assign mem_addr_D = ALU_result >> 2;
     assign mem_wdata_D = mem_wdata_D_LE;
@@ -192,7 +193,6 @@ module RISCV(clk,
         else begin
             mem_addr_I <= next_mem_addr_I;
         end
-
     end
 
 endmodule
@@ -475,8 +475,8 @@ module Register(
     reg [63:0] register_w [0:REGSIZE-1];
 
     // Assign Part
-    assign read_data1 = register_w[read_reg1];
-    assign read_data2 = register_w[read_reg2];
+    assign read_data1 = register_r[read_reg1];
+    assign read_data2 = register_r[read_reg2];
 
     integer i;
     // Combinational Part
@@ -546,10 +546,6 @@ module ALU(
             default: res = 64'b0;
         endcase
     end
-
-    // always@(negedge rst_n) begin
-    //     res <= 0;   
-    // end
 
 endmodule
 
